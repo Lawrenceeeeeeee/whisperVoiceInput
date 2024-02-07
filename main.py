@@ -5,6 +5,18 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 from pynput import keyboard
+import time
+
+# 写一个给函数计时的装饰器。
+
+def timer(func):
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        result = func(*args, **kwargs)
+        print(f"{func.__name__} took {time.time() - start} seconds.")
+        return result
+    return wrapper
+
 
 # 全局变量
 option_presses = 0  # 跟踪Option键按下的次数
@@ -28,6 +40,7 @@ def start_recording():
         while recording:
             sd.sleep(100)
 
+import platform
 
 def stop_recording():
     global recording, audio_data
@@ -41,7 +54,15 @@ def stop_recording():
     print("开始转写...")
     res = transcribe_audio(temp_filename)
     copy_to_clipboard(res)
-    paste()
+    os_name = platform.system()
+    if os_name == "Darwin":
+        paste_using_applescript()
+    elif os_name == "Windows" or os_name == "Linux":
+        paste()
+    else:
+        print(f"Operating system '{os_name}' is not specifically handled by this script.")
+
+
     # 删除临时文件
     print(f"删除临时文件 {temp_filename}")
     os.remove(temp_filename)
@@ -53,9 +74,11 @@ def on_press(key):
         if key == keyboard.Key.alt:
             option_presses += 1
             if option_presses == 2 and not recording:
+                threading.Thread(target=start_sound, daemon=True).start()
                 # 使用线程来避免阻塞键盘监听
                 threading.Thread(target=start_recording, daemon=True).start()
             elif option_presses == 3 and recording:
+                threading.Thread(target=end_sound, daemon=True).start()
                 stop_recording()
                 option_presses = 0  # 重置按键次数，为下一次录音准备
     except Exception as e:
@@ -65,12 +88,13 @@ def on_press(key):
 import whisper
 
 
+@timer
 def transcribe_audio(filename):
     # 加载模型，这里使用的是"small"模型，你也可以根据需求使用其他大小的模型
     model = whisper.load_model("small")
 
     # 使用Whisper模型进行语音转写
-    result = model.transcribe(filename, initial_prompt="这是一段普通话语音")
+    result = model.transcribe(filename, initial_prompt="以下是普通话的句子，这是一段用户的语音输入。")
 
     # 打印转写结果的文本
     print(result["text"])
@@ -95,6 +119,21 @@ def paste():
     # 模拟按下并释放'ctrl+v'（Windows/Linux）或'command+v'（Mac）来执行粘贴操作
     # pyautogui.hotkey('ctrl', 'v')  # 对于Windows和Linux
     pyautogui.hotkey('command', 'v')  # 对于Mac
+
+import subprocess
+
+def paste_using_applescript():
+    script = 'tell application "System Events" to keystroke "v" using command down'
+    subprocess.run(["osascript", "-e", script])
+
+
+def start_sound():
+    os.system('afplay sounds/start.wav')  # Mac
+    # os.system('aplay sounds/start.wav')  # Linux
+
+def end_sound():
+    os.system('afplay sounds/end.mp3')  # Mac
+    # os.system('aplay sounds/end.wav')  # Linux
 
 
 # 使用线程来执行录音和停止录音操作，避免阻塞键盘监听器

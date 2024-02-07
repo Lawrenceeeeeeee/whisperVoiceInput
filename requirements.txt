@@ -1,7 +1,9 @@
-numpy
-sounddevice
-soundfile
-pynput
-whisper
-pyperclip
-pyautogui
+numpy==1.26.4
+sounddevice==0.4.6
+soundfile==0.12.1
+pynput==1.7.6
+torch==2.2.0
+faster-whisper==0.10.0
+whisper==1.1.10
+pyperclip==1.8.2
+pyautogui==0.9.54

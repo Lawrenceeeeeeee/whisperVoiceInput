@@ -6,7 +6,7 @@ import sounddevice as sd
 import soundfile as sf
 from pynput import keyboard
 import time
-
+import platform
 # 写一个给函数计时的装饰器。
 
 def timer(func):
@@ -23,7 +23,7 @@ option_presses = 0  # 跟踪Option键按下的次数
 recording = False  # 是否正在录音
 audio_data = np.array([], dtype=np.float32)  # 存储录音数据
 samplerate = 44100  # 录音的采样率
-
+os_name = platform.system()
 
 def record_callback(indata, frames, time, status):
     """这个回调函数在录音时被调用，用于收集输入数据"""
@@ -40,10 +40,10 @@ def start_recording():
         while recording:
             sd.sleep(100)
 
-import platform
+
 
 def stop_recording():
-    global recording, audio_data
+    global recording, audio_data, os_name
     print("停止录音，开始处理...")
     recording = False
     # 将录音数据保存到WAV文件中
@@ -54,7 +54,6 @@ def stop_recording():
     print("开始转写...")
     res = transcribe_audio(temp_filename)
     copy_to_clipboard(res)
-    os_name = platform.system()
     if os_name == "Darwin":
         paste_using_applescript()
     elif os_name == "Windows" or os_name == "Linux":
@@ -128,12 +127,26 @@ def paste_using_applescript():
 
 
 def start_sound():
-    os.system('afplay sounds/start.wav')  # Mac
-    # os.system('aplay sounds/start.wav')  # Linux
+    global os_name
+    if os_name == "Darwin":
+        os.system('afplay sounds/start.mp3')
+    elif os_name == "Windows":
+        os.system('start sounds/start.mp3')
+    elif os_name == "Linux":
+        os.system('aplay sounds/start.wav')
+    else:
+        print(f"Operating system '{os_name}' is not specifically handled by this script.")
 
 def end_sound():
-    os.system('afplay sounds/end.mp3')  # Mac
-    # os.system('aplay sounds/end.wav')  # Linux
+    global os_name
+    if os_name == "Darwin":
+        os.system('afplay sounds/end.mp3')
+    elif os_name == "Windows":
+        os.system('start sounds/end.mp3')
+    elif os_name == "Linux":
+        os.system('aplay sounds/end.wav')
+    else:
+        print(f"Operating system '{os_name}' is not specifically handled by this script.")
 
 
 # 使用线程来执行录音和停止录音操作，避免阻塞键盘监听器

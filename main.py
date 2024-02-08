@@ -10,8 +10,17 @@ import platform
 import torch
 from faster_whisper import WhisperModel
 import whisper
-
+import webrtcvad
 import argparse
+import asyncio
+from collections import deque
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+# import live
+
+loop = asyncio.get_event_loop()  # 获取事件循环
 
 _MODELS = {
     "tiny.en": "Systran/faster-whisper-tiny.en",
@@ -29,6 +38,7 @@ _MODELS = {
 }
 
 language_dict = {
+    "Auto": None,
     "Afrikaans": "af",
     "አማርኛ": "am",
     "العربية": "ar",
@@ -127,8 +137,8 @@ language_dict = {
     "Tiếng Việt": "vi",
     "ייִדיש": "yi",
     "Yorùbá": "yo",
-    "中文": "zh",
-    "粤语": "yue",
+    "简体中文": "zh",
+    "繁体中文": "yue",
 }
 
 # 创建 ArgumentParser 对象
@@ -136,15 +146,15 @@ parser = argparse.ArgumentParser(description='whisperVoiceInput参数')
 
 # 添加参数
 parser.add_argument('--model_size', '-m', type=str, help='Model size', default='small')
-parser.add_argument('--shortcut', '-s', type=str, default='alt',
+parser.add_argument('--shortcut', '-s', type=str, default='option/alt',
                     help='The shortcut key to listen for (e.g., "alt", "ctrl").')
 parser.add_argument('--language', '-l', type=str, default=None, help='The language to transcribe.')
 
 key_mapping = {
-    'alt': keyboard.Key.alt,
-    'ctrl': keyboard.Key.ctrl,
+    'option/alt': keyboard.Key.alt,
+    'control/ctrl': keyboard.Key.ctrl,
     'shift': keyboard.Key.shift,
-    'cmd': keyboard.Key.cmd,  # 注意在Windows上没有Key.cmd，这在Mac上代表Command键
+    'command': keyboard.Key.cmd,  # 注意在Windows上没有Key.cmd，这在Mac上代表Command键
 }
 
 # 解析命令行参数
@@ -168,7 +178,8 @@ def timer(func):
     def wrapper(*args, **kwargs):
         start = time.time()
         result = func(*args, **kwargs)
-        print(f"{func.__name__} took {time.time() - start} seconds.")
+        # print(f"{func.__name__} took {time.time() - start} seconds.")
+        logger.info(f"{func.__name__} took {time.time() - start} seconds.")
         return result
 
     return wrapper
@@ -177,20 +188,31 @@ def timer(func):
 def check_nvidia_gpu():
     if torch.cuda.is_available():
         num_gpus = torch.cuda.device_count()
-        print(f"NVIDIA GPU detected: {num_gpus} GPU(s) available.")
+        # print(f"NVIDIA GPU detected: {num_gpus} GPU(s) available.")
+        logger.info(f"NVIDIA GPU detected: {num_gpus} GPU(s) available.")
         for i in range(num_gpus):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+            # print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+            logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
         return True
     else:
-        print("No NVIDIA GPU detected.")
+        # print("No NVIDIA GPU detected.")
+        logger.info("No NVIDIA GPU detected.")
         return False
 
 
 # 全局变量
 option_presses = 0  # 跟踪Option键按下的次数
 recording = False  # 是否正在录音
+is_processing = False  # 是否正在处理录音
+sample_rate = 48000  # WebRTC VAD需要的采样率
+audio_stream = None
 audio_data = np.array([], dtype=np.float32)  # 存储录音数据
-samplerate = 44100  # 录音的采样率
+samplerate = 48000  # 录音的采样率
+FRAME_DURATION = 30  # 毫秒
+FRAME_SIZE = int(sample_rate * FRAME_DURATION / 1000)
+vad = webrtcvad.Vad(1)  # 设置VAD的敏感度
+frames = deque()  # 存储语音帧
+
 os_name = platform.system()
 last_press_time = 0  # 上一次按键的时间戳
 gpu = check_nvidia_gpu()  # 是否有NVIDIA GPU
@@ -201,8 +223,8 @@ compute_type = "float16" if gpu else "int8"
 model = WhisperModel(model_size, device=device, compute_type=compute_type)
 # 加载模型，这里使用的是"small"模型，你也可以根据需求使用其他大小的模型
 official_model = whisper.load_model(model_size)
-print("Whisper模型已加载。")
-
+# print("Whisper模型已加载。")
+logger.info("Whisper模型已加载。")
 
 def record_callback(indata, frames, time, status):
     """这个回调函数在录音时被调用，用于收集输入数据"""
@@ -212,7 +234,8 @@ def record_callback(indata, frames, time, status):
 
 def start_recording():
     global recording, audio_data
-    print("开始录音...")
+    # print("开始录音...")
+    logger.info("开始录音...")
     audio_data = np.array([], dtype=np.float32)  # 重新初始化录音数据数组
     recording = True
     with sd.InputStream(callback=record_callback, samplerate=samplerate, channels=1, dtype='float32'):
@@ -222,14 +245,16 @@ def start_recording():
 
 def stop_recording():
     global recording, audio_data, os_name
-    print("停止录音，开始处理...")
+    # print("停止录音，开始处理...")
+    logger.info("停止录音，开始处理...")
     recording = False
     # 将录音数据保存到WAV文件中
     temp_filename = tempfile.mktemp(prefix='recording_', suffix='.wav', dir=None)
     sf.write(temp_filename, audio_data, samplerate)
-    print(f"录音已保存到 {temp_filename}")
+    # print(f"录音已保存到 {temp_filename}")
     # 这里可以添加Whisper处理逻辑
-    print("开始转写...")
+    # print("开始转写...")
+    logger.info("开始转写...")
     # res = transcribe_audio(temp_filename)
     res = faster_transcribe(temp_filename)
     copy_to_clipboard(res)
@@ -238,21 +263,23 @@ def stop_recording():
     elif os_name == "Windows" or os_name == "Linux":
         paste()
     else:
-        print(f"Operating system '{os_name}' is not specifically handled by this script.")
+        # print(f"Operating system '{os_name}' is not specifically handled by this script.")
+        logger.warning(f"Operating system '{os_name}' is not specifically handled by this script.")
 
     # 删除临时文件
-    print(f"删除临时文件 {temp_filename}")
+    # print(f"删除临时文件 {temp_filename}")
     os.remove(temp_filename)
 
 
 def on_press(key):
-    global option_presses, recording, last_press_time
+    global option_presses, recording, last_press_time, is_processing
     try:
         if key == shortcut:
             # 如果正在录音，直接处理结束录音的逻辑
             if recording:
                 threading.Thread(target=end_sound, daemon=True).start()
-                stop_recording()
+                threading.Thread(target=stop_recording, daemon=True).start()
+                is_processing = False
                 option_presses = 0  # 重置按键次数，为下一次准备
                 return  # 结束函数执行
 
@@ -271,7 +298,8 @@ def on_press(key):
                 threading.Thread(target=start_recording, daemon=True).start()
                 # 注意在 start_recording() 函数内应有逻辑更改 recording = True
     except Exception as e:
-        print(e)
+        # print(e)
+        logger.error(e)
 
 
 @timer
@@ -280,7 +308,8 @@ def transcribe_audio(filename):
     result = official_model.transcribe(filename, initial_prompt="以下是普通话的句子，这是一段用户的语音输入。")
 
     # 打印转写结果的文本
-    print(result["text"])
+    # print(result["text"])
+    logger.info(result["text"])
 
     # 返回转写的文本，以便进一步处理
     return result["text"]
@@ -310,10 +339,12 @@ def faster_transcribe(audio_path, beam_size=5):
     complete_transcription = ' '.join(segment.text for segment in segments)
 
     # Optionally, print detected language information
-    print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
+    # print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
+    logger.info("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
     # Optionally, print the complete transcription
-    print("Complete Transcription:\n", complete_transcription)
+    # print("Complete Transcription:\n", complete_transcription)
+    logger.info("Complete Transcription:\n", complete_transcription)
 
     return complete_transcription
 
@@ -324,7 +355,8 @@ import pyperclip
 def copy_to_clipboard(text):
     # 使用pyperclip将文本复制到剪贴板
     pyperclip.copy(text)
-    print("文本已复制到剪贴板。")
+    # print("文本已复制到剪贴板。")
+    logger.info("文本已复制到剪贴板。")
 
 
 import pyautogui
@@ -353,7 +385,8 @@ def start_sound():
     elif os_name == "Linux":
         os.system('aplay sounds/start.wav')
     else:
-        print(f"Operating system '{os_name}' is not specifically handled by this script.")
+        # print(f"Operating system '{os_name}' is not specifically handled by this script.")
+        logger.error(f"Operating system '{os_name}' is not specifically handled by this script.")
 
 
 def end_sound():
@@ -365,13 +398,16 @@ def end_sound():
     elif os_name == "Linux":
         os.system('aplay sounds/end.mp3')
     else:
-        print(f"Operating system '{os_name}' is not specifically handled by this script.")
-
+        # print(f"Operating system '{os_name}' is not specifically handled by this script.")
+        logger.error(f"Operating system '{os_name}' is not specifically handled by this script.")
 
 # 使用线程来执行录音和停止录音操作，避免阻塞键盘监听器
 import threading
 
-# 设置监听器监听键盘事件
-listener = keyboard.Listener(on_press=on_press)
-listener.start()
-listener.join()
+
+
+if __name__ == "__main__":
+    # 设置键盘监听器
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
+    listener.join()

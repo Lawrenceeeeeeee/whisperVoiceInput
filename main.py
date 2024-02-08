@@ -15,7 +15,9 @@ import argparse
 import asyncio
 from collections import deque
 import logging
+import sys
 
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 # import live
@@ -146,7 +148,7 @@ parser = argparse.ArgumentParser(description='whisperVoiceInput参数')
 
 # 添加参数
 parser.add_argument('--model_size', '-m', type=str, help='Model size', default='small')
-parser.add_argument('--shortcut', '-s', type=str, default='option/alt',
+parser.add_argument('--keybind', '-s', type=str, default='option/alt',
                     help='The shortcut key to listen for (e.g., "alt", "ctrl").')
 parser.add_argument('--language', '-l', type=str, default=None, help='The language to transcribe.')
 
@@ -165,12 +167,12 @@ language = args.language  # 语言
 
 if model_size not in _MODELS.keys():
     raise ValueError(f"Invalid model size: {model_size}, expected one of: {_MODELS.keys()}")
-if args.shortcut not in key_mapping.keys():
-    raise ValueError(f"Invalid shortcut: {args.shortcut}, expected one of: {key_mapping.keys()}")
+if args.keybind not in key_mapping.keys():
+    raise ValueError(f"Invalid shortcut: {args.keybind}, expected one of: {key_mapping.keys()}")
 if language and language not in language_dict.values():
     raise ValueError(f"Invalid language: {language}, expected one of: {language_dict.values()}")
 
-shortcut = key_mapping[args.shortcut]  # 快捷键
+shortcut = key_mapping[args.keybind]  # 快捷键
 
 # 写一个给函数计时的装饰器。
 

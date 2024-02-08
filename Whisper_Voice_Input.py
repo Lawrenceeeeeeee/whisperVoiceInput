@@ -6,6 +6,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5 import QtCore
 from PyQt5.QtGui import QFont
 import json
+import os
 
 class LoadingDialog(QDialog):
     def __init__(self, parent=None):
@@ -95,13 +96,21 @@ class VoiceInputManager(QMainWindow):
 
         self.central_widget.setLayout(self.layout)
 
-    def start_main_script(self, model_size='small', language='zh'):
+    def start_main_script(self, model_size='small', language='zh', keybind='option/alt'):
         if self.process:
             self.process.terminate()  # 如果已有进程在运行，则终止它
         # 使用subprocess启动main.py，并传递模型大小和语言作为参数
-        self.process = subprocess.Popen(['python', 'main.py', f'--model_size={model_size}', f'--language={language}'],
+        # 计算main.py的绝对路径
+
+        if getattr(sys, 'frozen', False):
+            # 如果应用被打包
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(__file__)
+        script_path = os.path.join(base_path, 'main.py')
+        self.process = subprocess.Popen(['python', f'{script_path}', f'--model_size={model_size}', f'--language={language}', f'--keybind={keybind}'],
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1,
-                                        universal_newlines=True)
+                                        universal_newlines=True, cwd=base_path)
         if self.output_watcher:
             self.output_watcher.terminate()
             self.output_watcher.wait()
@@ -150,14 +159,23 @@ class VoiceInputManager(QMainWindow):
         self.start_main_script(model_size, main.language_dict[language])
 
 
+    def get_settings_path(self, filename='settings.json'):
+        home_dir = os.path.expanduser('~')  # 获取用户主目录路径
+        app_dir = os.path.join(home_dir, '.whisperVoiceInput')  # 应用的设置目录
+        if not os.path.exists(app_dir):
+            os.makedirs(app_dir)  # 如果目录不存在，则创建它
+        return os.path.join(app_dir, filename)  # 返回完整的设置文件路径
+
     def save_settings(self, settings, filename='settings.json', encoding='utf-8'):
-        with open(filename, 'w') as f:
+        settings_path = self.get_settings_path(filename)
+        with open(settings_path, 'w', encoding=encoding) as f:
             json.dump(settings, f)
 
     # 加载预设
     def load_settings(self, filename='settings.json', encoding='utf-8'):
+        settings_path = self.get_settings_path(filename)
         try:
-            with open(filename, 'r') as f:
+            with open(settings_path, 'r', encoding=encoding) as f:
                 return json.load(f)
         except FileNotFoundError:
             return {}  # 返回一个空字典，如果文件不存在
